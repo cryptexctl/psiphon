@@ -1,1 +1,9 @@
 ping - https://github.com/cryptexctl/psiphon/raw/refs/heads/main/plugins/ping.plugin
+cat - https://github.com/cryptexctl/psiphon/raw/refs/heads/main/plugins/cat.plugin
+debug - https://github.com/cryptexctl/psiphon/raw/refs/heads/main/plugins/debug.plugin
+deb - https://github.com/cryptexctl/psiphon/raw/refs/heads/main/plugins/dep.plugin
+exteraphone - https://github.com/cryptexctl/psiphon/raw/refs/heads/main/plugins/exteraphone.plugin
+flagremover - https://github.com/cryptexctl/psiphon/raw/refs/heads/main/plugins/flagRemover.plugin
+pastebin - https://github.com/cryptexctl/psiphon/raw/refs/heads/main/plugins/pastebin.plugin
+plscrash - https://github.com/cryptexctl/psiphon/raw/refs/heads/main/plugins/plscrash.plugin
+uptime - https://github.com/cryptexctl/psiphon/raw/refs/heads/main/plugins/uptime.plugin
