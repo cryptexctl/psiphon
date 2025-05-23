@@ -1,0 +1,15 @@
+from base_plugin import HookResult, HookStrategy
+
+__id__ = "ping"
+__name__ = "Ping"
+__description__ = "Responds with Pong! when you type .ping"
+__author__ = "platon"
+__min_version__ = "11.9.0"
+
+class PingPlugin(BasePlugin):
+    def on_send_message_hook(self, account, params) -> HookStrategy:
+        if not isinstance(params.message, str) or params.message.strip() != ".ping":
+            return HookResult()
+
+        params.message = "Pong!"
+        return HookResult(strategy=HookStrategy.MODIFY, params=params) 
