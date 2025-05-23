@@ -1,0 +1,165 @@
+import re
+import requests
+import threading
+from java.util import Locale
+from org.telegram.ui.ActionBar import AlertDialog
+from settings import Header, Input, Divider, Selector
+from base_plugin import BasePlugin, HookResult, HookStrategy
+from android_utils import log
+from android_utils import run_on_ui_thread
+from client_utils import get_last_fragment, show_error_bulletin
+
+__id__ = "pastebin"
+__name__ = "Pastebin"
+__description__ = "Send text/code to Pastebin with .pastebin"
+__author__ = "@exteraDev"
+__min_version__ = "11.9.0"
+__icon__ = "exteraDevPlugins/8"
+
+PASTEBIN_API_URL = "https://pastebin.com/api/api_post.php"
+PASTEBIN_API_KEY = "API_KEY"
+
+PASTEBIN_EXPIRE_OPTIONS = [
+    ("N", "Never"),
+    ("10M", "10 Minutes"),
+    ("1H", "1 Hour"),
+    ("1D", "1 Day"),
+    ("1W", "1 Week"),
+    ("2W", "2 Weeks"),
+    ("1M", "1 Month")
+]
+
+PASTEBIN_SYNTAXES = [
+    "text", "python", "javascript", "java", "c", "cpp", "php", "ruby", "go", "bash", "html", "css", "json", "xml", "sql", "lua", "perl", "swift", "kotlin", "typescript"
+]
+
+class PastebinPlugin(BasePlugin):
+    def create_settings(self):
+        lang = Locale.getDefault().getLanguage()
+        if lang.startswith("pt"):
+            header = "Configurações do Pastebin"
+            api_label = "API Key do Pastebin"
+            privacy_label = "Privacidade"
+            expire_label = "Expiração"
+            syntax_label = "Sintaxe"
+            usage = 'Uso: .pastebin "titulo" [seu texto ou código]'
+            privacy_items = ["Privado", "Público"]
+            expire_items = ["Nunca", "10 minutos", "1 hora", "1 dia", "1 semana", "2 semanas", "1 mês"]
+        elif lang.startswith("ru"):
+            header = "Настройки Pastebin"
+            api_label = "API ключ Pastebin"
+            privacy_label = "Приватность"
+            expire_label = "Время жизни"
+            syntax_label = "Синтаксис"
+            usage = 'Использование: .pastebin "заголовок" [ваш текст или код]'
+            privacy_items = ["Приватный", "Публичный"]
+            expire_items = ["Никогда", "10 минут", "1 час", "1 день", "1 неделя", "2 недели", "1 месяц"]
+        else:
+            header = "Pastebin Settings"
+            api_label = "Pastebin API Key"
+            privacy_label = "Privacy"
+            expire_label = "Expiration"
+            syntax_label = "Syntax"
+            usage = 'Usage: .pastebin "title" [your text or code]'
+            privacy_items = ["Private", "Public"]
+            expire_items = ["Never", "10 Minutes", "1 Hour", "1 Day", "1 Week", "2 Weeks", "1 Month"]
+        return [
+            Header(text=header),
+            Input(key="api_key", text=api_label, default=PASTEBIN_API_KEY),
+            Selector(key="privacy", text=privacy_label, default=0, items=privacy_items),
+            Selector(key="expire", text=expire_label, default=0, items=expire_items),
+            Selector(key="syntax", text=syntax_label, default=0, items=PASTEBIN_SYNTAXES),
+            Divider(text=usage)
+        ]
+
+    def _send_to_pastebin(self, code, callback, title=None, private=True, expire="N", syntax="text"):
+        api_key = self.get_setting("api_key", PASTEBIN_API_KEY)
+        data = {
+            "api_dev_key": api_key,
+            "api_option": "paste",
+            "api_paste_code": code,
+            "api_paste_private": "1" if private else "0",
+            "api_paste_expire_date": expire,
+            "api_paste_format": syntax
+        }
+        if title:
+            data["api_paste_name"] = title
+        try:
+            resp = requests.post(PASTEBIN_API_URL, data=data, timeout=15)
+            if resp.status_code == 200 and resp.text.startswith("http"):
+                callback(success=True, url=resp.text)
+            else:
+                error_map = {
+                    "Bad API request, invalid api_dev_key": "API Key inválida.",
+                    "Bad API request, maximum number of 25 unlisted pastes for your free account": "Limite de pastes privados atingido (25 pastes não listados para contas gratuitas).",
+                    "Bad API request, api_paste_code was empty": "O texto/código está vazio.",
+                    "Bad API request, maximum paste file size exceeded": "O tamanho do paste excede o limite permitido.",
+                    "Bad API request, api_paste_name contains invalid characters": "O título contém caracteres inválidos.",
+                }
+                msg = error_map.get(resp.text.strip(), resp.text)
+                callback(success=False, error=msg)
+        except Exception as e:
+            callback(success=False, error=str(e))
+
+    def _process_pastebin(self, params, code, progress_dialog, title=None, private=True, expire="N", syntax="text"):
+        def cb(success, url=None, error=None):
+            try:
+                if progress_dialog is not None:
+                    progress_dialog.dismiss()
+            except Exception:
+                pass
+            if success:
+                params.message = url
+                send_helper = __import__('client_utils').get_send_messages_helper()
+                run_on_ui_thread(lambda: send_helper.sendMessage(params))
+            else:
+                show_error_bulletin(f"Error : {error}")
+        threading.Thread(
+            target=self._send_to_pastebin,
+            args=(code, cb, title, private, expire, syntax),
+            daemon=True
+        ).start()
+
+    def on_send_message_hook(self, account, params):
+        if not hasattr(params, 'message') or not isinstance(params.message, str):
+            return HookResult()
+        msg = params.message.strip()
+        if not msg.startswith(".pastebin"):
+            return HookResult()
+        match = re.match(r'^\.pastebin\s+"([^"]+)"\s+(.+)$', msg, re.DOTALL)
+        if match:
+            title = match.group(1).strip()
+            code = match.group(2).strip()
+        else:
+            parts = msg.split(" ", 1)
+            title = None
+            code = parts[1].strip() if len(parts) > 1 else ""
+        lang = Locale.getDefault().getLanguage()
+        if not code:
+            if lang.startswith("pt"):
+                show_error_bulletin("Nenhum texto informado após .pastebin")
+            elif lang.startswith("ru"):
+                show_error_bulletin("Нет текста после .pastebin")
+            else:
+                show_error_bulletin("No text provided after .pastebin")
+            return HookResult(strategy=HookStrategy.CANCEL)
+        privacy_setting = self.get_setting("privacy", 0)
+        private = True if privacy_setting == 0 else False
+        expire_idx = self.get_setting("expire", 0)
+        expire = PASTEBIN_EXPIRE_OPTIONS[expire_idx][0]
+        syntax_idx = self.get_setting("syntax", 0)
+        syntax = PASTEBIN_SYNTAXES[syntax_idx]
+        progress_dialog = None
+        try:
+            progress_dialog = AlertDialog(get_last_fragment().getParentActivity(), 3)
+            if lang.startswith("pt"):
+                progress_dialog.setMessage("Enviando para o Pastebin...")
+            elif lang.startswith("ru"):
+                progress_dialog.setMessage("Отправка в Pastebin...")
+            else:
+                progress_dialog.setMessage("Sending to Pastebin...")
+            progress_dialog.show()
+        except Exception as e:
+            log(f"Failed to show progress dialog: {e}")
+        self._process_pastebin(params, code, progress_dialog, title, private, expire, syntax)
+        return HookResult(strategy=HookStrategy.CANCEL)

@@ -1,0 +1,18 @@
+from de.robv.android.xposed import XposedBridge
+from org.telegram.messenger import FlagSecureReason
+
+__id__ = "flag_secure_remover"
+__name__ = "Flag Secure Remover"
+__description__ = "Removes Flag Secure."
+__author__ = "bleizix"
+__min_version__ = "11.9.0"
+
+class FlagSecureRemover(BasePlugin):
+
+    def on_plugin_load(self):
+
+        class Remove:
+            def replace_hooked_method(self, param):
+                 return
+
+        self.hook_method(FlagSecureReason.getClass().getDeclaredMethod("attach"), Remove())

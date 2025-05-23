@@ -1,0 +1,69 @@
+from base_plugin import HookResult, HookStrategy, BasePlugin
+from android_utils import log
+from android.content import SharedPreferences
+from org.telegram.messenger import ApplicationLoader
+from com.exteragram.messenger import ExteraConfig
+
+__id__ = "plscrash"
+__name__ = "PluginCrash"
+__description__ = "Плагин для тестирования безопасного режима через симуляцию краша [.crash]"
+__author__ = "@systemxplore, @pidormodules"
+__min_version__ = "11.9.0"
+__version__ = "1.0.0"
+
+class PluginCrashPlugin(BasePlugin):
+    def __init__(self):
+        super().__init__()
+        self.preferences = ApplicationLoader.applicationContext.getSharedPreferences("plugin_settings", 0)
+
+    def simulate_crash(self, plugin_id=None):
+        try:
+            # Устанавливаем флаги краша
+            editor = self.preferences.edit()
+            editor.putBoolean("had_crash", True)
+            if plugin_id:
+                editor.putString("crashed_plugin_id", plugin_id)
+            editor.apply()
+            
+            # Вызываем исключение для симуляции краша
+            raise Exception("Simulated crash for testing safe mode")
+        except Exception as e:
+            log(f"Crash simulation error: {str(e)}")
+
+    def on_send_message_hook(self, account, params) -> HookStrategy:
+        if not isinstance(params.message, str):
+            return HookResult()
+
+        message = params.message.strip()
+        
+        if message == ".crash":
+            self.simulate_crash()
+            params.message = "⚠️ Симулирован краш плагина. Безопасный режим должен включиться при следующем запуске."
+            return HookResult(strategy=HookStrategy.MODIFY, params=params)
+            
+        elif message.startswith(".crash "):
+            plugin_id = message[7:].strip()
+            self.simulate_crash(plugin_id)
+            params.message = f"⚠️ Симулирован краш плагина {plugin_id}. Он будет отключен при следующем запуске."
+            return HookResult(strategy=HookStrategy.MODIFY, params=params)
+            
+        elif message == ".crash_status":
+            had_crash = self.preferences.getBoolean("had_crash", False)
+            crashed_plugin = self.preferences.getString("crashed_plugin_id", None)
+            is_safe_mode = ExteraConfig.pluginsSafeMode
+            
+            status = "🛡️ Статус краша:\n"
+            status += f"• Был краш: {'Да' if had_crash else 'Нет'}\n"
+            if had_crash:
+                status += f"• Крашнувший плагин: {crashed_plugin if crashed_plugin else 'неизвестный'}\n"
+            status += f"• Безопасный режим: {'включен' if is_safe_mode else 'выключен'}"
+            
+            params.message = status
+            return HookResult(strategy=HookStrategy.MODIFY, params=params)
+            
+        elif message == ".crash_clear":
+            self.preferences.edit().remove("had_crash").remove("crashed_plugin_id").apply()
+            params.message = "✅ История крашей очищена"
+            return HookResult(strategy=HookStrategy.MODIFY, params=params)
+
+        return HookResult()

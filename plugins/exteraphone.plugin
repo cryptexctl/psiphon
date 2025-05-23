@@ -1,0 +1,61 @@
+from base_plugin import BasePlugin, HookResult, HookStrategy
+from android_utils import log
+from settings import Header, Input
+
+__id__ = "exteraphone"
+__name__ = "Смартфон exteraGram"
+__description__ = "смартфон exteraGram. Форкнуто с @mochaplugins 'vivomod'"
+__author__ = "@nijon4rch"
+__min_version__ = "11.9.0"
+__icon__ = "nixter4jon/2"
+__version__ = "1.0.1"
+
+class VivoPlugin(BasePlugin):
+    def create_settings(self):
+        from java.util import Locale
+        lang = Locale.getDefault().getLanguage()
+        strings = {
+            'ru': {
+                'aptext_text': "Добавляемый текст",
+                'aptext_desc': "Этот текст будет добавляться в конец каждого сообщения"
+            },
+            'en': {
+                'aptext_text': "Appended text",
+                'aptext_desc': "This text will be appended at the end of every message"
+            }
+        } 
+
+        lang_key = 'ru' if lang.startswith('ru') else 'en'
+        s = strings[lang_key]
+
+        return [
+            Header(text="Настройки плагина"),
+            Input(
+                key="append_text",
+                text=s['aptext_text'],
+                default="Смартфон exteraGram",
+                subtext=s['aptext_desc']
+            ),
+        ]
+
+    def on_send_message_hook(self, account, params) -> HookStrategy:
+        try:
+            if not isinstance(params.message, str):
+                return HookResult()
+
+            if params.message.startswith(".noep "):
+                params.message = params.message[6:].lstrip()
+                return HookResult(strategy=HookStrategy.MODIFY, params=params)
+            elif params.message.endswith(" .noep"):
+                params.message = params.message[:-6].lstrip()
+                return HookResult(strategy=HookStrategy.MODIFY, params=params)
+            elif params.message.startswith("🎰"):
+                return HookResult()
+
+            append_text = self.get_setting("append_text", "Смартфон exteraGram").strip()
+            params.message = params.message + "\n" + append_text
+            
+            return HookResult(strategy=HookStrategy.MODIFY, params=params)
+        except Exception as e:
+            log(f"DonoMod plugin error: {str(e)}")
+            return HookResult() 

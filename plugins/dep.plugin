@@ -1,0 +1,42 @@
+from typing import List, Tuple
+from org.telegram.messenger import R, LocaleController, AndroidUtilities, MessageObject
+from org.telegram.tgnet import TLRPC
+from client_utils import get_send_messages_helper, show_error_bulletin, show_info_bulletin, get_last_fragment, get_account_instance, send_request, get_user_config, get_messages_controller, send_message
+import json
+
+__id__ = "depplugin"
+__name__ = "депай мразь"
+__version__ = "1.0.1"
+__description__ = "депни своего друга"
+__author__ = "@hpdevfox"
+__min_version__ = "11.9.0"
+__icon__ = "twemojitg/6"
+
+class DepPlugin(BasePlugin):
+    def on_send_message_hook(self, account, params) -> HookStrategy:
+        if not isinstance(params.message, str) or not params.message.startswith(".dep "):
+            return HookResult()
+
+        command = params.message.replace(".dep ", "").split()
+        count = command[command.__len__()-1]
+        
+        target = ""
+        if(count.isnumeric()):
+            command.remove(count)
+        else:
+            count = 3
+
+
+        for _i in command:
+            target += _i + " "
+
+        for _ in range(int(count)): #мяу, мне приятно что я смог принести пользу этому обществу :<
+            send_message({
+                "peer": params.peer,
+                "replyToMsg": params.replyToMsg,
+                "replyToTopMsg": params.replyToTopMsg,
+                "message": "🎰"
+            })
+
+        params.message = f"депаю {target}"
+        return HookResult(strategy=HookStrategy.MODIFY, params=params) 
