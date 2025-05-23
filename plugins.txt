@@ -1,1 +1,1 @@
-ping - 
+ping - https://github.com/cryptexctl/psiphon/raw/refs/heads/main/plugins/ping.plugin
