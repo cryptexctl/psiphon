@@ -5,23 +5,25 @@ __id__ = "donomod"
 __name__ = "Dono Mod"
 __description__ = "Adds 'дон' at the end of each sentence"
 __author__ = "@systemxplore, @pidormodules"
-__min_version__ = "11.9.0"
+__min_version__ = "11.9.1"
 
-class DonoModPlugin(BasePlugin):
-    def on_send_message_hook(self, account, params) -> HookStrategy:
+class DonomodPlugin(BasePlugin):
+    def __init__(self):
+        super().__init__()
+
+    def on_plugin_load(self):
+        self.add_on_send_message_hook()
+
+    def on_send_message_hook(self, account, params):
         try:
             if not isinstance(params.message, str):
                 return HookResult()
-
             sentences = params.message.split('.')
             modified_sentences = []
-            
             for sentence in sentences:
-                if sentence.strip(): 
+                if sentence.strip():
                     modified_sentences.append(sentence.strip() + " дон")
-            
             params.message = '. '.join(modified_sentences)
-            
             return HookResult(strategy=HookStrategy.MODIFY, params=params)
         except Exception as e:
             log(f"DonoMod plugin error: {str(e)}")

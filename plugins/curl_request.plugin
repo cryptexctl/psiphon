@@ -1,0 +1,273 @@
+import json
+import threading
+import requests
+from base_plugin import BasePlugin, HookResult, HookStrategy
+from android_utils import log, run_on_ui_thread
+from client_utils import run_on_queue, send_message, get_last_fragment
+from org.telegram.ui.ActionBar import AlertDialog
+from ui.settings import Header, Switch, Input, Divider
+from ui.bulletin import BulletinHelper
+
+__id__ = "reuwuest"
+__name__ = "reuwuest"
+__description__ = "Send HTTP requests like curl [.reuwuest]"
+__author__ = "platon"
+__min_version__ = "11.9.1"
+__icon__ = "SpottyAnimated/42"
+__version__ = "1.0.0"
+
+class ReuwuestPlugin(BasePlugin):
+    def __init__(self):
+        super().__init__()
+
+    def create_settings(self):
+        return [
+            Header(text="reuwuest Settings"),
+            Input(
+                key="default_timeout", 
+                text="Default Timeout (seconds)",
+                default="30",
+                subtext="Timeout for HTTP requests"
+            ),
+            Switch(
+                key="show_headers",
+                text="Show Response Headers",
+                default=False,
+                subtext="Include response headers in output"
+            ),
+            Switch(
+                key="pretty_json",
+                text="Pretty Print JSON",
+                default=True,
+                subtext="Format JSON responses with indentation"
+            ),
+            Switch(
+                key="show_timing",
+                text="Show Request Timing",
+                default=True,
+                subtext="Display request duration"
+            ),
+            Switch(
+                key="auto_detect_json",
+                text="Auto Detect JSON Data",
+                default=True,
+                subtext="Automatically parse JSON strings in -d parameter"
+            ),
+            Switch(
+                key="show_request_info",
+                text="Show Request Info",
+                default=True,
+                subtext="Display request method and URL before response"
+            ),
+            Divider(text="Command: .reuwuest <URL> [-X METHOD] [-H header] [-d data]")
+        ]
+
+    def on_plugin_load(self):
+        self.add_on_send_message_hook()
+        self.progress_dialog = None
+
+    def on_plugin_unload(self):
+        self.remove_hook("on_send_message")
+        log("[ReuwuestPlugin] Unloaded")
+
+    def parse_curl_command(self, message):
+        parts = message.split()
+        if len(parts) < 2:
+            BulletinHelper.show_error("Usage: .reuwuest <URL> [-X METHOD] [-H header] [-d data]\nExample: .reuwuest https://httpbin.org/get\n.reuwuest https://api.example.com -X POST -d '{\"key\":\"value\"}'")
+            return None, "Usage: .reuwuest <URL> [-X METHOD] [-H header] [-d data]\nExample: .reuwuest https://httpbin.org/get\n.reuwuest https://api.example.com -X POST -d '{\"key\":\"value\"}'"
+        
+        url = parts[1]
+        if not url.startswith(('http://', 'https://')):
+            url = 'https://' + url
+            
+        method = "GET"
+        headers = {}
+        data = None
+        
+        i = 2
+        while i < len(parts):
+            if parts[i] == "-X" and i + 1 < len(parts):
+                method = parts[i + 1].upper()
+                i += 2
+            elif parts[i] == "-H" and i + 1 < len(parts):
+                header = parts[i + 1]
+                if ":" in header:
+                    key, value = header.split(":", 1)
+                    headers[key.strip()] = value.strip()
+                i += 2
+            elif parts[i] == "-d" and i + 1 < len(parts):
+                data_str = parts[i + 1]
+                if self.get_setting("auto_detect_json", True) and data_str.startswith(('{', '[')):
+                    try:
+                        data = json.loads(data_str)
+                    except json.JSONDecodeError:
+                        data = data_str
+                else:
+                    data = data_str
+                i += 2
+            else:
+                i += 1
+        
+        return {
+            "url": url,
+            "method": method,
+            "headers": headers,
+            "data": data
+        }, None
+
+    def format_response(self, response, error=None, duration=None, request_info=None):
+        if error:
+            return f"❌ Error: {error}"
+        
+        try:
+            lines = []
+            
+            if request_info and self.get_setting("show_request_info", True):
+                lines.append(f"📡 {request_info['method']} {request_info['url']}")
+                lines.append("")
+            
+            if response.status_code >= 200 and response.status_code < 300:
+                status_emoji = "✅"
+            elif response.status_code >= 300 and response.status_code < 400:
+                status_emoji = "🔄"
+            elif response.status_code >= 400 and response.status_code < 500:
+                status_emoji = "⚠️"
+            else:
+                status_emoji = "❌"
+            
+            status_line = f"{status_emoji} Status: {response.status_code}"
+            if duration and self.get_setting("show_timing", True):
+                status_line += f" ({duration:.2f}s)"
+            lines.append(status_line)
+            
+            if self.get_setting("show_headers", False):
+                lines.append("\n📋 Headers:")
+                for key, value in response.headers.items():
+                    lines.append(f"  {key}: {value}")
+                lines.append("")
+            
+            content_type = response.headers.get('content-type', '').lower()
+            
+            if 'application/json' in content_type:
+                try:
+                    json_data = response.json()
+                    if self.get_setting("pretty_json", True):
+                        formatted_json = json.dumps(json_data, indent=2, ensure_ascii=False)
+                    else:
+                        formatted_json = json.dumps(json_data, ensure_ascii=False)
+                    lines.append("📄 Response:")
+                    lines.append(formatted_json)
+                except json.JSONDecodeError:
+                    lines.append("📄 Response (invalid JSON):")
+                    lines.append(response.text[:2000])
+            elif 'text/' in content_type or 'application/xml' in content_type:
+                lines.append("📄 Response:")
+                text = response.text[:2000]
+                if len(response.text) > 2000:
+                    text += "\n... (truncated)"
+                lines.append(text)
+            else:
+                lines.append(f"📄 Binary response ({len(response.content)} bytes)")
+                if response.content:
+                    preview = response.content[:100]
+                    try:
+                        lines.append(f"Preview: {preview.decode('utf-8', errors='ignore')}")
+                    except:
+                        lines.append(f"Preview: {preview.hex()}")
+            
+            return "\n".join(lines)
+        except Exception as e:
+            return f"❌ Error formatting response: {str(e)}"
+
+    def make_request(self, params, peer):
+        import time
+        try:
+            timeout = int(self.get_setting("default_timeout", "30"))
+            headers = {'User-Agent': 'exteraGram-reuwuest/1.0'}
+            headers.update(params["headers"])
+            if params["data"] and isinstance(params["data"], dict):
+                headers['Content-Type'] = 'application/json'
+            start_time = time.time()
+            request_info = {"method": params["method"], "url": params["url"]}
+            if params["data"]:
+                if isinstance(params["data"], dict):
+                    response = requests.request(
+                        method=params["method"],
+                        url=params["url"],
+                        json=params["data"],
+                        headers=headers,
+                        timeout=timeout
+                    )
+                else:
+                    response = requests.request(
+                        method=params["method"],
+                        url=params["url"],
+                        data=params["data"],
+                        headers=headers,
+                        timeout=timeout
+                    )
+            else:
+                response = requests.request(
+                    method=params["method"],
+                    url=params["url"],
+                    headers=headers,
+                    timeout=timeout
+                )
+            duration = time.time() - start_time
+            formatted_response = self.format_response(response, duration=duration, request_info=request_info)
+        except Exception as e:
+            formatted_response = f"❌ Error: {str(e)}"
+        send_params = {"message": formatted_response, "peer": peer}
+        def finish():
+            if self.progress_dialog:
+                self.progress_dialog.dismiss()
+                self.progress_dialog = None
+            send_message(send_params)
+        run_on_ui_thread(finish)
+
+    def show_progress(self, method, url):
+        fragment = get_last_fragment()
+        if fragment:
+            def create_dialog():
+                try:
+                    builder = AlertDialog.Builder(fragment.getParentActivity())
+                    builder.setTitle("🦀 reuwuest")
+                    
+                    display_url = url
+                    if len(url) > 50:
+                        display_url = url[:47] + "..."
+                    
+                    builder.setMessage(f"Sending {method} request to\n{display_url}")
+                    builder.setCancelable(False)
+                    self.progress_dialog = builder.create()
+                    self.progress_dialog.show()
+                except Exception as e:
+                    log(f"[ReuwuestPlugin] Error creating progress dialog: {e}")
+            
+            run_on_ui_thread(create_dialog)
+
+    def on_send_message_hook(self, account, params):
+        if not hasattr(params, 'message') or not isinstance(params.message, str):
+            return HookResult()
+
+        if not params.message.startswith(".reuwuest"):
+            return HookResult()
+
+        request_params, error = self.parse_curl_command(params.message)
+        if error:
+            params.message = error
+            return HookResult(strategy=HookStrategy.MODIFY, params=params)
+
+        peer = getattr(params, 'peer', None)
+        if not peer:
+            params.message = "❌ Error: Unable to get peer information"
+            return HookResult(strategy=HookStrategy.MODIFY, params=params)
+
+        self.show_progress(request_params["method"], request_params["url"])
+        
+        def run_request():
+            self.make_request(request_params, peer)
+        
+        run_on_queue(run_request)
+        
+        return HookResult(strategy=HookStrategy.CANCEL) 

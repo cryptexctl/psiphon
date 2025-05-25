@@ -1,0 +1,253 @@
+import json
+import threading
+import requests
+import os
+from base_plugin import BasePlugin, HookResult, HookStrategy
+from android_utils import log, run_on_ui_thread
+from client_utils import run_on_queue, send_message, get_last_fragment
+from org.telegram.ui.ActionBar import AlertDialog
+from ui.settings import Header, Switch, Input, Divider
+from ui.bulletin import BulletinHelper
+
+__id__ = "psiphon"
+__name__ = "Psiphon"
+__description__ = "Plugin manager for exteraGram [.psisetup, .psidl, .psiadd, .psirm]"
+__author__ = "@systemxplore"
+__min_version__ = "11.9.1"
+__icon__ = "SpottyAnimated/1"
+__version__ = "1.0.0"
+
+PLUGINS_DIR = "/data/user/0/com.exteragram.messenger/files/plugins"
+SOURCES_FILE = os.path.join(PLUGINS_DIR, "psiphon_sources.json")
+
+class PsiphonPlugin(BasePlugin):
+    def __init__(self):
+        super().__init__()
+        self.default_source = "https://raw.githubusercontent.com/cryptexctl/psiphon/main/plugins.txt"
+        self.sources = [self.default_source]
+        self.plugins_map = {}
+        self.progress_dialog = None
+        self.load_sources()
+        
+    def has_settings(self):
+        return True
+
+    def create_settings(self):
+        return [
+            Header(text="Psiphon Settings"),
+            Input(
+                key="default_source",
+                text="Default Source",
+                default=self.default_source,
+                readonly=True,
+                subtext="Main plugins repository (cannot be removed)"
+            ),
+            Switch(
+                key="auto_update",
+                text="Auto Update",
+                default=True,
+                subtext="Update plugins list when app starts"
+            ),
+            Switch(
+                key="show_progress",
+                text="Show Progress Dialog",
+                default=True,
+                subtext="Show download progress when installing plugins"
+            ),
+            Switch(
+                key="verify_sources",
+                text="Verify Sources",
+                default=True,
+                subtext="Check source availability before adding"
+            ),
+            Switch(
+                key="show_download_info",
+                text="Show Download Info",
+                default=True,
+                subtext="Display plugin ID and source when downloading"
+            ),
+            Divider(text="Commands:\n.psisetup - Update plugins list\n.psidl [id] - Download plugin\n.psiadd [url] - Add source\n.psirm [url] - Remove source\n.psilist - Show sources")
+        ]
+
+    def on_plugin_load(self):
+        self.add_on_send_message_hook()
+
+    def on_plugin_unload(self):
+        self.remove_hook("on_send_message_hook")
+        log("[PsiphonPlugin] Unloaded")
+
+    def show_progress(self, title, message):
+        if not self.get_setting("show_progress", True):
+            return
+            
+        fragment = get_last_fragment()
+        if fragment:
+            def create_dialog():
+                try:
+                    builder = AlertDialog.Builder(fragment.getParentActivity())
+                    builder.setTitle(f"🔌 {title}")
+                    builder.setMessage(message)
+                    builder.setCancelable(False)
+                    self.progress_dialog = builder.create()
+                    self.progress_dialog.show()
+                except Exception as e:
+                    log(f"[PsiphonPlugin] Error creating progress dialog: {e}")
+            
+            run_on_ui_thread(create_dialog)
+
+    def dismiss_progress(self):
+        if self.progress_dialog:
+            def dismiss():
+                self.progress_dialog.dismiss()
+                self.progress_dialog = None
+            run_on_ui_thread(dismiss)
+
+    def on_add_source(self, url: str):
+        if not url:
+            return
+            
+        if url in self.sources:
+            BulletinHelper.show_error("Source already exists")
+            return
+        
+        try:
+            response = requests.get(url)
+            if response.status_code != 200:
+                BulletinHelper.show_error(f"Failed to fetch from source: {response.status_code}")
+                return
+                
+            self.sources.append(url)
+            self.save_sources()
+            BulletinHelper.show_error("Source added successfully")
+            self.fetch_plugins_list()
+        except Exception as e:
+            BulletinHelper.show_error(f"Failed to add source: {e}")
+
+    def on_remove_source(self, url):
+        self.remove_source(url)
+        ctx.reloadSettings()
+
+    def on_refresh_sources(self, ctx):
+        run_on_queue(self.fetch_plugins_list)
+
+    def load_sources(self):
+        try:
+            if os.path.exists(SOURCES_FILE):
+                with open(SOURCES_FILE, "r") as f:
+                    data = json.load(f)
+                    if isinstance(data, list):
+                        self.sources = [self.default_source] + [s for s in data if s != self.default_source]
+        except Exception as e:
+            log(f"Failed to load sources: {e}")
+            self.sources = [self.default_source]
+
+    def save_sources(self):
+        try:
+            sources_to_save = [s for s in self.sources if s != self.default_source]
+            with open(SOURCES_FILE, "w") as f:
+                json.dump(sources_to_save, f)
+        except Exception as e:
+            BulletinHelper.show_error(f"Failed to save sources: {e}")
+
+    def remove_source(self, url: str):
+        if url == self.default_source:
+            BulletinHelper.show_error("Cannot remove default source")
+            return
+            
+        if url not in self.sources:
+            BulletinHelper.show_error("Source not found")
+            return
+            
+        self.sources.remove(url)
+        self.save_sources()
+        BulletinHelper.show_error("Source removed successfully")
+        self.fetch_plugins_list()
+
+    def list_sources(self):
+        sources_list = "\n".join(f"{'[Default] ' if s == self.default_source else ''}{s}" for s in self.sources)
+        BulletinHelper.show_error(f"Plugin sources:\n{sources_list}")
+
+    def fetch_plugins_list(self):
+        try:
+            self.plugins_map.clear()
+            for source in self.sources:
+                try:
+                    response = requests.get(source)
+                    if response.status_code == 200:
+                        self.parse_plugins_list(response.text)
+                except Exception as e:
+                    log(f"Failed to fetch from {source}: {e}")
+            
+            BulletinHelper.show_error(f"Found {len(self.plugins_map)} plugins from {len(self.sources)} sources")
+        except Exception as e:
+            BulletinHelper.show_error(f"Failed to fetch plugins list: {e}")
+
+    def parse_plugins_list(self, content: str):
+        try:
+            for line in content.split("\n"):
+                line = line.strip()
+                if line and " - " in line:
+                    plugin_id, link = line.split(" - ", 1)
+                    self.plugins_map[plugin_id.strip()] = link.strip()
+        except Exception as e:
+            BulletinHelper.show_error(f"Failed to parse plugins list: {e}")
+
+    def download_plugin_by_id(self, plugin_id: str):
+        if not self.plugins_map:
+            run_on_ui_thread(lambda: BulletinHelper.show_error("No plugins list available. Run .psisetup first"))
+            return
+
+        if plugin_id not in self.plugins_map:
+            run_on_ui_thread(lambda: BulletinHelper.show_error(f"Plugin {plugin_id} not found"))
+            return
+
+        try:
+            url = self.plugins_map[plugin_id]
+            run_on_queue(lambda: self.download_plugin(plugin_id, url))
+        except Exception as e:
+            BulletinHelper.show_error(f"Failed to start plugin download: {e}")
+
+    def download_plugin(self, plugin_id: str, url: str):
+        try:
+            response = requests.get(url)
+            if response.status_code != 200:
+                run_on_ui_thread(lambda: BulletinHelper.show_error(f"Failed to download plugin: {response.status_code}"))
+                return
+
+            temp_path = os.path.join(PLUGINS_DIR, f"temp_{plugin_id}.plugin")
+            final_path = os.path.join(PLUGINS_DIR, f"{plugin_id}.py")
+            
+            with open(temp_path, "wb") as f:
+                f.write(response.content)
+            
+            if os.path.exists(final_path):
+                os.remove(final_path)
+            os.rename(temp_path, final_path)
+            
+            run_on_ui_thread(lambda: BulletinHelper.show_error(f"Plugin {plugin_id} downloaded successfully"))
+        except Exception as e:
+            run_on_ui_thread(lambda: BulletinHelper.show_error(f"Failed to save plugin: {e}"))
+
+    def on_send_message_hook(self, account, params):
+        if not hasattr(params, 'message') or not isinstance(params.message, str):
+            return HookResult()
+        message = params.message.strip()
+        if message == ".psisetup":
+            run_on_queue(self.fetch_plugins_list)
+            return HookResult(strategy=HookStrategy.CANCEL)
+        elif message.startswith(".psidl "):
+            plugin_id = message.split(" ", 1)[1].strip()
+            self.download_plugin_by_id(plugin_id)
+            return HookResult(strategy=HookStrategy.CANCEL)
+        elif message.startswith(".psiadd "):
+            url = message.split(" ", 1)[1].strip()
+            self.add_source(url)
+            return HookResult(strategy=HookStrategy.CANCEL)
+        elif message.startswith(".psirm "):
+            url = message.split(" ", 1)[1].strip()
+            self.remove_source(url)
+            return HookResult(strategy=HookStrategy.CANCEL)
+        elif message == ".psilist":
+            self.list_sources()
+            return HookResult(strategy=HookStrategy.CANCEL)
+        return HookResult() 

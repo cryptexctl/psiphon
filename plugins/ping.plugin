@@ -4,12 +4,20 @@ __id__ = "ping"
 __name__ = "Ping"
 __description__ = "Responds with Pong! when you type .ping"
 __author__ = "platon"
-__min_version__ = "11.9.0"
+__min_version__ = "11.9.1"
 
 class PingPlugin(BasePlugin):
-    def on_send_message_hook(self, account, params) -> HookStrategy:
+    def __init__(self):
+        super().__init__()
+
+    def on_plugin_load(self):
+        self.add_on_send_message_hook()
+
+    def on_send_message_hook(self, account, params):
         if not isinstance(params.message, str) or params.message.strip() != ".ping":
             return HookResult()
-
         params.message = "Pong!"
-        return HookResult(strategy=HookStrategy.MODIFY, params=params) 
+        return HookResult(strategy=HookStrategy.MODIFY, params=params)
+
+    def on_plugin_load(self):
+        pass 

