@@ -7,3 +7,6 @@ flagremover - https://github.com/cryptexctl/psiphon/raw/refs/heads/main/plugins/
 pastebin - https://github.com/cryptexctl/psiphon/raw/refs/heads/main/plugins/pastebin.plugin
 plscrash - https://github.com/cryptexctl/psiphon/raw/refs/heads/main/plugins/plscrash.plugin
 uptime - https://github.com/cryptexctl/psiphon/raw/refs/heads/main/plugins/uptime.plugin
+reuwuest - https://github.com/cryptexctl/psiphon/raw/refs/heads/main/plugins/curl_request.plugin
+crashogram - https://github.com/cryptexctl/psiphon/raw/refs/heads/main/plugins/crashogram.plugin
+PoCovod - https://github.com/cryptexctl/psiphon/raw/refs/heads/main/plugins/PoCovod.plugin
